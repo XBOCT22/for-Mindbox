@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind      : Deployment
+metadata  :
+  name  : test-task
+  labels:
+    app  : myapp
+    env  : prod
+    owner: AntonMoiseev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test-task
+  strategy:
+    rollingUpdate:       # При стратегии rollingUpdate старные поды отключаются после того, как запущены новые. При таком подходе получаем zero downtime.
+      maxUnavailable: 0  # Решено не останаливать запущенные поды, пока не будут созданы новые.
+      maxSurge: 1        # Во время обновления должен быть создан один дополнительный новый под, и только после того, как он перейдёт в статус Running – будет остановлен один из старых подов.
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: test-task
+    spec:
+      containers:
+      - name : test-task
+        image: k8s.gcr.io/hpa-example
+        ports:
+        - containerPort: 80
+        readinessProbe:            # Readiness пробы используются чтобы узнать, готов ли контейнер принимать траффик. Pod считается готовым, когда все его контейнеры готовы.
+          httpGet:                 # метод проверки работоспособности сервера путем отправки GET запроса
+            path: /
+            port: 80
+          periodSeconds: 10       # проба проводится каждые 10 секунд
+          failureThreshold: 3     # три неудачных проверки работоспособности говорят, что контейнер не отвечает
+          successThreshold: 1     # одна удачная проверка работоспособности подтверждает, что контейнер рабочий
+          timeoutSeconds: 1       # таймаут равен 1 секунде
+        livenessProbe:            # liveness проба используется для проверки, когда перезапустить контейнер. Она должна поймать блокировку, когда приложение запущено, но не может ничего сделать.
+          httpGet:                # метод проверки работоспособности сервера путем отправки GET запроса
+            path: /
+            port: 80
+          periodSeconds      : 10       # пробу проводится каждые 10 секунд
+          successThreshold   : 1        # одна удачная проверка работоспособности подтверждает, что контейнер рабочий
+          failureThreshold   : 3        # три неудачных проверки работоспособности говорят, что контейнер не отвечает
+          timeoutSeconds     : 1        # таймаут равен одной секунде
+          initialDelaySeconds: 14       # после первой пробы должно пройти 14 секунд
+        resources:
+          limits:
+            cpu: 200m
+            memory: 128Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: test-task
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind      : Deployment
+    name      : test-task
+  minReplicas : 1       # минимальное количество реплик при скелинге
+  maxReplicas : 4       # максимальное количество реплик при скалинге  
+metrics:
+- type: Resource
+  resource:
+    name: cpu
+    target:
+      type: Utilization
+      averageUtilization: 70
